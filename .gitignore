@@ -1,0 +1,6 @@
+.venv/
+.uv/
+*.pyc
+__pycache__/
+output/*.md
+logs/

@@ -1,0 +1,33 @@
+services:
+  docling-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: docling-server
+    ports:
+      - "12138:12138"
+    environment:
+      # Optional tuning, uncomment when needed:
+      # DOCLING_GPU_BATCH_SIZE: "16"
+      HF_HUB_DISABLE_SYMLINKS: "1"
+      HF_HUB_DISABLE_SYMLINKS_WARNING: "1"
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+
+  docling-server-gpu:
+    profiles: ["gpu"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: docling-server-gpu
+    ports:
+      - "12138:12138"
+    environment:
+      HF_HUB_DISABLE_SYMLINKS: "1"
+      HF_HUB_DISABLE_SYMLINKS_WARNING: "1"
+      NVIDIA_VISIBLE_DEVICES: "all"
+    volumes:
+      - ./logs:/app/logs
+    gpus: all
+    restart: unless-stopped

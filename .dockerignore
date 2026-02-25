@@ -1,0 +1,14 @@
+.git
+.gitignore
+.venv
+.uv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.mypy_cache
+output
+logs
+terminals
+agent-transcripts
