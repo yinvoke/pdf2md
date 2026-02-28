@@ -15,8 +15,16 @@ dependencies = [
 [project.optional-dependencies]
 # PyTorch with CUDA: install with
 #   uv sync --extra cuda
+# torch + torchvision 必须来自同一 PyTorch 源，否则会出现 operator torchvision::nms does not exist
 cuda = [
-    "torch"
+    "torch",
+    "torchvision",
+]
+# System resource monitoring (dev/test only): install with
+#   uv sync --extra cuda --extra monitor
+monitor = [
+    "psutil>=6.0.0",
+    "pynvml>=11.5.0",
 ]
 
 [tool.uv]
@@ -25,6 +33,7 @@ index-url = "https://pypi.org/simple"
 
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu130", extra = "cuda" }]
+torchvision = [{ index = "pytorch-cu130", extra = "cuda" }]
 
 [[tool.uv.index]]
 name = "pytorch-cu130"

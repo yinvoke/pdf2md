@@ -16,7 +16,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.converter import convert_pdf_to_markdown
+from app.converter import convert_pdf_to_markdown, get_accelerator_device
 
 EXAMPLE_DIR = PROJECT_ROOT / "example"
 OUTPUT_DIR = PROJECT_ROOT / "output"
@@ -66,7 +66,8 @@ def main() -> None:
         print(f"No PDF files found in {EXAMPLE_DIR}")
         return
 
-    print(f"Found {len(pdfs)} PDF(s) in {EXAMPLE_DIR}, mode=convert")
+    device = get_accelerator_device().upper()
+    print(f"Found {len(pdfs)} PDF(s) in {EXAMPLE_DIR}, mode=convert, device={device}")
     for pdf_path in sorted(pdfs):
         out_name = pdf_path.stem + ".md"
         out_path = OUTPUT_DIR / out_name

@@ -17,9 +17,10 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 try:
-    from app.converter import convert_report
+    from app.converter import convert_report, get_accelerator_device
 except ImportError:
     convert_report = None
+    get_accelerator_device = None
 
 EXAMPLE_DIR = PROJECT_ROOT / "example"
 OUTPUT_DIR = PROJECT_ROOT / "output"
@@ -72,7 +73,8 @@ def main() -> None:
         print(f"No PDF files found in {EXAMPLE_DIR}")
         return
 
-    print(f"Found {len(pdfs)} PDF(s) in {EXAMPLE_DIR}, mode=report")
+    device = get_accelerator_device().upper() if get_accelerator_device else "?"
+    print(f"Found {len(pdfs)} PDF(s) in {EXAMPLE_DIR}, mode=report, device={device}")
     for pdf_path in sorted(pdfs):
         out_name = pdf_path.stem + ".report.md"
         out_path = OUTPUT_DIR / out_name

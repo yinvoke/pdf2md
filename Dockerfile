@@ -13,11 +13,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN pip install --no-cache-dir uv
 
+# Copy full project so hatchling has README.md and app/ when building docling-server.
 COPY . /app
+RUN uv sync --frozen --extra cuda
 
-# Install dependencies from lockfile for reproducible builds.
-RUN uv sync --frozen
+# Verify torch and AutoProcessor (fail build with clear error if not)
+RUN .venv/bin/python -c "import torch; print('torch:', torch.__version__)"
+RUN .venv/bin/python scripts/check_autoprocessor.py
 
 EXPOSE 12138
-
-CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "12138"]
+CMD [".venv/bin/uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "12138", "--timeout-keep-alive", "480"]

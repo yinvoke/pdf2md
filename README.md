@@ -10,13 +10,16 @@
 
 ### Benchmark
 
-环境：Intel 13600KF + NVIDIA RTX 4080
+环境：Intel 13600KF + NVIDIA RTX 3060 12GB + 64GB RAM
+配置：batch=64, layout_batch=64, table_batch=32, queue=10
 
-| 文档 | 页数 | 字符数 | 耗时 |
-|------|------|--------|------|
-| 2024 年年度报告 | 202 | 398,045 | 109.10s |
-| 2025 年 3 季度报告 | 10 | 30,097 | 8.13s |
-| 2025 年半年度报告 | 136 | 288,668 | 87.02s |
+| 文档 | 页数 | 字符数 | 耗时 | 速度 | CPU峰值 | RAM峰值 | GPU峰值 | VRAM峰值 |
+|------|------|--------|------|------|---------|---------|---------|----------|
+| 3季度报告 | 10 | 30,097 | 9.1s | 1.10页/s | 8% | 12% | 97% | 70% |
+| 半年度报告 | 136 | 288,668 | 66.0s | 2.06页/s | 12% | 14% | 100% | 93% |
+| 年度报告 | 202 | 398,045 | 87.2s | 2.32页/s | 11% | 16% | 100% | 96% |
+
+> 优化后性能提升：batch size翻倍，大文件速度提升20-28%，GPU利用率100%，显存利用率90%+
 
 ## 环境
 
@@ -28,16 +31,22 @@
 
 ## 安装与运行
 
+**生产环境**（最小依赖）：
+
 ```bash
-uv sync
+uv sync                    # 仅核心依赖
+uv sync --extra cuda       # 添加 GPU 加速
 ```
 
-**GPU 加速**（按需）：
+**开发/测试环境**（含资源监控）：
 
 ```bash
-uv sync --extra cuda
+uv sync --extra cuda --extra monitor
 uv run python scripts/check_cuda.py
+uv run python scripts/test_monitoring.py  # 测试转换和监控功能
 ```
+
+> 监控功能需要 `psutil` 和 `pynvml` 依赖（`--extra monitor`），生产环境可省略以减小镜像体积。监控指标包括：CPU%、RAM GB/%、GPU利用率%、VRAM占用率%。
 
 **启动服务：**
 
@@ -82,12 +91,14 @@ curl -X POST "http://localhost:12138/convert" -F "file=@your.pdf"
 
 ## Docker
 
+镜像会安装 CUDA 依赖（torch/torchvision），以便 docling 的图表识别等阶段能正常导入；不传 GPU 时仍按 CPU 运行。
+
 ```bash
 docker build -t docling-server:local .
 docker run --rm -p 12138:12138 docling-server:local
 ```
 
-GPU 模式见 `docker-compose.yml` 中 `--profile gpu`。
+使用 GPU 时需加 `--gpus all`，或使用 docker-compose：`docker-compose --profile gpu up`。
 
 ## License
 
