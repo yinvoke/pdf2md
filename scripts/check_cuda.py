@@ -7,6 +7,7 @@
 2) 给出可直接执行的修复命令
 3) 成功返回 0，失败返回非 0（便于 CI 或脚本链路判断）
 """
+
 import subprocess
 import sys
 import re
@@ -42,7 +43,6 @@ def get_pkg_ver(name: str) -> Optional[str]:
 def main() -> int:
     print("=== PyTorch 与 CUDA 诊断 ===\n")
     print("CUDA Toolkit 下载地址: https://developer.nvidia.com/cuda-downloads\n")
-    print("cuDNN 下载地址: https://developer.nvidia.com/cudnn\n")
 
     smi_ok, smi_out = run_cmd(["nvidia-smi"])
     nvcc_ok, nvcc_out = run_cmd(["nvcc", "--version"])
@@ -60,23 +60,14 @@ def main() -> int:
         print(f"[Python 环境] 无法导入 torch: {exc}")
         print("\n建议执行：")
         print("  uv sync --extra cuda")
-        print("  # 可选（某些场景需要） uv pip install nvidia-cudnn")
         return 2
 
     torch_ver = torch.__version__
     built = bool(torch.backends.cuda.is_built())
     avail = bool(torch.cuda.is_available())
     torch_cuda = getattr(torch.version, "cuda", None)
-    try:
-        cudnn_runtime_ver = torch.backends.cudnn.version()
-    except Exception:
-        cudnn_runtime_ver = None
-    cudnn_available = bool(getattr(torch.backends.cudnn, "enabled", False))
-
     print("[Python 环境]")
     print(f"PyTorch version:  {torch_ver}")
-    print(f"cuDNN Available:  {cudnn_available}")
-    print(f"cuDNN runtime:    {cudnn_runtime_ver or '(不可用)'}")
     print(f"CUDA built in torch: {built}")
     print(f"CUDA Available:      {avail}")
     print(f"torch.version.cuda:  {torch_cuda}")
@@ -117,7 +108,6 @@ def main() -> int:
 
     print("  uv pip uninstall torch")
     print("  uv sync --extra cuda")
-    print("  # 可选（某些场景需要）：uv pip install nvidia-pyindex && uv pip install nvidia-cudnn")
     print("  uv run python scripts/check_cuda.py")
 
     return 1

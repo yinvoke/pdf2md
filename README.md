@@ -42,7 +42,6 @@
 - 推荐cuda，没cuda太慢了，没必要
 - 可选：NVIDIA GPU + CUDA（无则用 CPU）
   - CUDA 12.4+
-  - CUDNN (可选) 9.0+
 
 ## 安装与运行
 
