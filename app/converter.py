@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import logging
+import re
 import tempfile
 import time
 import threading
@@ -720,8 +721,19 @@ def _extract_report_chapters_from_toc(pdf_path: Path) -> list[dict]:
     """
     Extract chapter ranges from PDF TOC.
     Return: [{title, start_page, end_page}] where page is 1-based inclusive.
+
+    Strategy:
+    1. Try semantic matching: identify TOC entries whose titles match the
+       standard Chinese report chapter pattern ``第X节`` (e.g. 第一节, 第二节 …).
+       This is the universal naming convention for listed-company periodic
+       reports in China and is resilient to malformed bookmark hierarchies.
+    2. Fallback: if no ``第X节`` entries are found, use the original
+       ``min(level)`` approach (top-level bookmark nodes).
     """
     import pymupdf  # type: ignore
+
+    # Pattern: starts with 第...节 (e.g. 第一节, 第二节, 第十二节)
+    _CHAPTER_RE = re.compile(r"^第[一二三四五六七八九十百零]+节")
 
     doc = pymupdf.open(str(pdf_path))
     try:
@@ -744,16 +756,25 @@ def _extract_report_chapters_from_toc(pdf_path: Path) -> list[dict]:
         if not normalized:
             return []
 
-        top_level = min(level for level, _, _ in normalized)
-        top_nodes = [
-            (title, page) for level, title, page in normalized if level == top_level
+        # --- Strategy 1: semantic chapter detection via 第X节 pattern ---
+        chapter_nodes = [
+            (title, page) for _, title, page in normalized if _CHAPTER_RE.search(title)
         ]
-        if len(top_nodes) < 2:
+
+        # --- Strategy 2: fallback to min-level ---
+        if not chapter_nodes:
+            top_level = min(level for level, _, _ in normalized)
+            chapter_nodes = [
+                (title, page) for level, title, page in normalized if level == top_level
+            ]
+
+        if len(chapter_nodes) < 2:
             return []
 
+        # Deduplicate by page and sort
         dedup_nodes: list[tuple[str, int]] = []
         seen_pages: set[int] = set()
-        for title, page in sorted(top_nodes, key=lambda x: x[1]):
+        for title, page in sorted(chapter_nodes, key=lambda x: x[1]):
             if page in seen_pages:
                 continue
             seen_pages.add(page)
