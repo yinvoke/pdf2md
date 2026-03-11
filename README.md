@@ -105,14 +105,10 @@ curl -X POST "http://localhost:12138/convert" -F "file=@your.pdf"
 
 ## Docker
 
-镜像会安装 CUDA 依赖（torch/torchvision），以便 docling 的图表识别等阶段能正常导入；不传 GPU 时仍按 CPU 运行。
-
 ```bash
-docker build -t docling-server:local .
-docker run --rm -p 12138:12138 docling-server:local
+docker build -t pdf2md .
+docker run -d --name pdf2md --gpus all -p 12138:12138 -v ./logs:/app/logs --restart unless-stopped pdf2md
 ```
-
-使用 GPU 时需加 `--gpus all`，或使用 docker-compose：`docker-compose --profile gpu up`。
 
 ## License
 
