@@ -18,6 +18,7 @@ from typing import Optional, List, Tuple
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS", "1")
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
+from app.postprocess import postprocess_markdown
 from docling.datamodel.accelerator_options import AcceleratorDevice, AcceleratorOptions
 from docling.datamodel.base_models import ConversionStatus, InputFormat
 from docling.datamodel.pipeline_options import ThreadedPdfPipelineOptions
@@ -668,6 +669,7 @@ def convert_pdf_to_markdown(
         )
 
         markdown = result.document.export_to_markdown()
+        markdown = postprocess_markdown(markdown)
         if return_summary:
             return markdown, summary
         return markdown
