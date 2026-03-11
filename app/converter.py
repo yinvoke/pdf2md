@@ -1,6 +1,7 @@
 """
 Docling PDF to Markdown converter with GPU acceleration and debug/summary logging.
 """
+
 from __future__ import annotations
 
 import os
@@ -31,6 +32,7 @@ def _verbose_print(verbose: bool, msg: str, *args) -> None:
     if not verbose:
         return
     print(msg % args if args else msg)
+
 
 # Pipeline tuning knobs (adjust here for local GPU/CPU benchmark tests).
 # GPU: 提高 batch 和 queue 以充分利用 GPU，减少空转。
@@ -96,6 +98,7 @@ def _get_gpu_memory_mb() -> tuple[float, float]:
     """Return (allocated_mb, reserved_mb). If CUDA not available, return (0, 0)."""
     try:
         import torch
+
         if not torch.cuda.is_available():
             return 0.0, 0.0
         return (
@@ -110,6 +113,7 @@ def _get_max_gpu_memory_mb() -> float:
     """Return max memory allocated in MB, or 0 if not available."""
     try:
         import torch
+
         if not torch.cuda.is_available():
             return 0.0
         return torch.cuda.max_memory_allocated() / (1024 * 1024)
@@ -121,10 +125,11 @@ def _get_gpu_total_memory_gb() -> float:
     """Return CUDA device 0 total memory in GB, or 0 if unavailable."""
     try:
         import torch
+
         if not torch.cuda.is_available():
             return 0.0
         props = torch.cuda.get_device_properties(0)
-        return props.total_memory / (1024 ** 3)
+        return props.total_memory / (1024**3)
     except Exception:
         return 0.0
 
@@ -137,9 +142,10 @@ def _get_system_metrics() -> tuple[float, float, float]:
     """
     try:
         import psutil
+
         cpu = psutil.cpu_percent(interval=None)
         mem = psutil.virtual_memory()
-        return cpu, mem.used / (1024 ** 3), mem.percent
+        return cpu, mem.used / (1024**3), mem.percent
     except ImportError:
         # psutil not installed - monitoring disabled
         return 0.0, 0.0, 0.0
@@ -155,6 +161,7 @@ def _get_gpu_utilization() -> tuple[float, float]:
     """
     try:
         import pynvml
+
         # Initialize and shutdown in each call to avoid state management issues
         pynvml.nvmlInit()
         try:
@@ -175,7 +182,7 @@ class ResourceSampler:
     Background resource sampler for monitoring peak utilization during conversion.
     Requires psutil + pynvml (install with: uv sync --extra monitor).
     """
-    
+
     def __init__(self, sample_interval: float = 1.0):
         self.sample_interval = sample_interval
         self._running = False
@@ -183,50 +190,53 @@ class ResourceSampler:
         self._records: List[Tuple[float, float, float, float, float, float]] = []
         self._gpu_handle = None
         self._nvml_available = False
-        
+
         # Try to initialize NVML
         try:
             import pynvml
+
             pynvml.nvmlInit()
             self._gpu_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
             self._nvml_available = True
         except Exception:
             pass
-    
+
     def _sample_once(self) -> Tuple[float, float, float, float, float, float]:
         """Return (timestamp, cpu%, ram%, gpu%, vram%, vram_mb)."""
         timestamp = time.time()
         cpu = ram = gpu_util = vram_util = vram_mb = 0.0
-        
+
         # CPU & RAM
         try:
             import psutil
+
             cpu = psutil.cpu_percent(interval=None)
             ram = psutil.virtual_memory().percent
         except (ImportError, Exception):
             pass
-        
+
         # GPU & VRAM
         if self._nvml_available and self._gpu_handle:
             try:
                 import pynvml
+
                 util = pynvml.nvmlDeviceGetUtilizationRates(self._gpu_handle)
                 gpu_util = float(util.gpu)
                 vram_util = float(util.memory)
-                
+
                 meminfo = pynvml.nvmlDeviceGetMemoryInfo(self._gpu_handle)
-                vram_mb = meminfo.used / (1024 ** 2)
+                vram_mb = meminfo.used / (1024**2)
             except Exception:
                 pass
-        
+
         return (timestamp, cpu, ram, gpu_util, vram_util, vram_mb)
-    
+
     def _monitor_loop(self):
         """Background monitoring loop."""
         while self._running:
             self._records.append(self._sample_once())
             time.sleep(self.sample_interval)
-    
+
     def start(self):
         """Start background monitoring."""
         if self._running:
@@ -235,7 +245,7 @@ class ResourceSampler:
         self._running = True
         self._thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self._thread.start()
-    
+
     def stop(self) -> dict:
         """
         Stop monitoring and return peak metrics.
@@ -244,15 +254,16 @@ class ResourceSampler:
         self._running = False
         if self._thread:
             self._thread.join(timeout=2.0)
-        
+
         # Cleanup NVML
         if self._nvml_available:
             try:
                 import pynvml
+
                 pynvml.nvmlShutdown()
             except Exception:
                 pass
-        
+
         if not self._records:
             return {
                 "cpu_peak": 0.0,
@@ -262,14 +273,14 @@ class ResourceSampler:
                 "vram_peak_mb": 0.0,
                 "sample_count": 0,
             }
-        
+
         # Calculate peak values
         cpu_vals = [r[1] for r in self._records]
         ram_vals = [r[2] for r in self._records]
         gpu_vals = [r[3] for r in self._records]
         vram_util_vals = [r[4] for r in self._records]
         vram_mb_vals = [r[5] for r in self._records]
-        
+
         return {
             "cpu_peak": max(cpu_vals),
             "ram_peak": max(ram_vals),
@@ -278,6 +289,7 @@ class ResourceSampler:
             "vram_peak_mb": max(vram_mb_vals),
             "sample_count": len(self._records),
         }
+
 
 def _build_gpu_pipeline_config(*, verbose: bool = False) -> dict:
     """
@@ -306,7 +318,10 @@ def _build_gpu_pipeline_config(*, verbose: bool = False) -> dict:
             )
             return cfg
         except ValueError:
-            _log.warning("Invalid DOCLING_GPU_BATCH_SIZE=%s, fallback to VRAM presets.", env_batch)
+            _log.warning(
+                "Invalid DOCLING_GPU_BATCH_SIZE=%s, fallback to VRAM presets.",
+                env_batch,
+            )
 
     total_gb = _get_gpu_total_memory_gb()
     selected_preset: Optional[dict] = None
@@ -410,12 +425,23 @@ class ConversionSummary:
 # Module-level singleton converter (lazy init)
 _converter: Optional[DocumentConverter] = None
 REPORT_REMOVE_KEYWORDS = (
-    "目录和释义",
+    "释义",
+    "目录",
     "公司简介",
     "主要财务指标",
     "公司治理",
     "环境和社会",
+    "环境与社会",
+    "社会责任",
+    "股东情况",
+    "股份变动",
+    "优先股",
+    "债券",
+    "董事、监事",
+    "备查文件",
     "其他报送数据",
+    "业务概要",
+    "员工情况",
 )
 
 
@@ -423,6 +449,7 @@ def _cuda_available() -> bool:
     """Return whether CUDA is actually available for this runtime."""
     try:
         import torch
+
         return torch.backends.cuda.is_built() and torch.cuda.is_available()
     except Exception:
         return False
@@ -438,7 +465,11 @@ def _get_converter(*, verbose: bool = False) -> DocumentConverter:
     if _converter is None:
         init_start = time.perf_counter()
         cuda_ok = _cuda_available()
-        pipeline_cfg = _build_gpu_pipeline_config(verbose=verbose) if cuda_ok else CPU_PIPELINE_CONFIG
+        pipeline_cfg = (
+            _build_gpu_pipeline_config(verbose=verbose)
+            if cuda_ok
+            else CPU_PIPELINE_CONFIG
+        )
         accelerator_device = (
             AcceleratorDevice.CUDA if cuda_ok else AcceleratorDevice.CPU
         )
@@ -511,29 +542,34 @@ def convert_pdf_to_markdown(
         raise FileNotFoundError(f"PDF not found: {path}")
 
     file_size_mb = path.stat().st_size / (1024 * 1024)
-    _verbose_print(verbose, "[STEP 1/3] Input checked: path=%s, size_mb=%.2f", path, file_size_mb)
+    _verbose_print(
+        verbose, "[STEP 1/3] Input checked: path=%s, size_mb=%.2f", path, file_size_mb
+    )
 
     converter_start = time.perf_counter()
     conv = _get_converter(verbose=verbose)
     converter_duration = time.perf_counter() - converter_start
-    _verbose_print(verbose, "[STEP 2/3] Converter ready: duration_sec=%.3f", converter_duration)
+    _verbose_print(
+        verbose, "[STEP 2/3] Converter ready: duration_sec=%.3f", converter_duration
+    )
     summary = ConversionSummary()
 
     # Initialize CPU monitoring (call once to prime psutil cache if available)
     try:
         import psutil
+
         psutil.cpu_percent(interval=None)
     except ImportError:
         pass  # psutil not installed, monitoring will be disabled
-    
+
     # Start background resource monitoring (1 sample per second)
     sampler = ResourceSampler(sample_interval=1.0)
     sampler.start()
-    
+
     cpu_before, ram_before_gb, ram_before_pct = _get_system_metrics()
     mem_before_alloc, mem_before_reserved = _get_gpu_memory_mb()
     gpu_util_before, vram_util_before = _get_gpu_utilization()
-    
+
     start = time.perf_counter()
     _verbose_print(
         verbose,
@@ -550,10 +586,10 @@ def convert_pdf_to_markdown(
     try:
         result = conv.convert(path)
         duration = time.perf_counter() - start
-        
+
         # Stop monitoring and get peak metrics
         peak_metrics = sampler.stop()
-        
+
         # Sample metrics immediately after conversion
         cpu_after, ram_after_gb, ram_after_pct = _get_system_metrics()
         gpu_util_after, vram_util_after = _get_gpu_utilization()
@@ -637,15 +673,15 @@ def convert_pdf_to_markdown(
 
     except Exception as e:
         duration = time.perf_counter() - start
-        
+
         # Stop monitoring and get peak metrics
         peak_metrics = sampler.stop()
-        
+
         # Sample metrics on error
         cpu_after, ram_after_gb, ram_after_pct = _get_system_metrics()
         gpu_util_after, vram_util_after = _get_gpu_utilization()
         mem_alloc, mem_reserved = _get_gpu_memory_mb()
-        
+
         summary.success = False
         summary.error = str(e)
         summary.duration_sec = duration
@@ -709,7 +745,9 @@ def _extract_report_chapters_from_toc(pdf_path: Path) -> list[dict]:
             return []
 
         top_level = min(level for level, _, _ in normalized)
-        top_nodes = [(title, page) for level, title, page in normalized if level == top_level]
+        top_nodes = [
+            (title, page) for level, title, page in normalized if level == top_level
+        ]
         if len(top_nodes) < 2:
             return []
 
@@ -727,7 +765,11 @@ def _extract_report_chapters_from_toc(pdf_path: Path) -> list[dict]:
         total_pages = doc.page_count
         chapters: list[dict] = []
         for idx, (title, start_page) in enumerate(dedup_nodes):
-            end_page = dedup_nodes[idx + 1][1] - 1 if idx < len(dedup_nodes) - 1 else total_pages
+            end_page = (
+                dedup_nodes[idx + 1][1] - 1
+                if idx < len(dedup_nodes) - 1
+                else total_pages
+            )
             start_page = max(1, min(start_page, total_pages))
             end_page = max(1, min(end_page, total_pages))
             if end_page < start_page:
@@ -769,7 +811,9 @@ def _filter_report_chapters(chapters: list[dict]) -> tuple[list[dict], list[dict
     return kept, removed
 
 
-def _build_filtered_report_pdf(source_pdf: Path, output_pdf: Path, chapters: list[dict]) -> None:
+def _build_filtered_report_pdf(
+    source_pdf: Path, output_pdf: Path, chapters: list[dict]
+) -> None:
     """Merge selected chapter ranges into one temporary report PDF."""
     import pymupdf  # type: ignore
 
@@ -821,18 +865,31 @@ def convert_report(
 
     report_type = _infer_report_type_from_filename(path.name)
     if report_type not in {"annual", "semi-annual"}:
-        _verbose_print(verbose, "Report mode: fallback to full conversion for non annual/semi-annual file.")
-        return convert_pdf_to_markdown(path, return_summary=return_summary, verbose=verbose)
+        _verbose_print(
+            verbose,
+            "Report mode: fallback to full conversion for non annual/semi-annual file.",
+        )
+        return convert_pdf_to_markdown(
+            path, return_summary=return_summary, verbose=verbose
+        )
 
     try:
         chapters = _extract_report_chapters_from_toc(path)
     except Exception as e:
-        _log.warning("Report mode TOC extraction failed, fallback to full conversion: %s", e)
-        return convert_pdf_to_markdown(path, return_summary=return_summary, verbose=verbose)
+        _log.warning(
+            "Report mode TOC extraction failed, fallback to full conversion: %s", e
+        )
+        return convert_pdf_to_markdown(
+            path, return_summary=return_summary, verbose=verbose
+        )
 
     if not chapters:
-        _verbose_print(verbose, "Report mode: TOC unavailable, fallback to full conversion.")
-        return convert_pdf_to_markdown(path, return_summary=return_summary, verbose=verbose)
+        _verbose_print(
+            verbose, "Report mode: TOC unavailable, fallback to full conversion."
+        )
+        return convert_pdf_to_markdown(
+            path, return_summary=return_summary, verbose=verbose
+        )
 
     kept_chapters, removed_chapters = _filter_report_chapters(chapters)
     if not kept_chapters:
@@ -841,7 +898,9 @@ def convert_report(
             "Report mode: all chapters removed (removed=%s), fallback to full conversion.",
             len(removed_chapters),
         )
-        return convert_pdf_to_markdown(path, return_summary=return_summary, verbose=verbose)
+        return convert_pdf_to_markdown(
+            path, return_summary=return_summary, verbose=verbose
+        )
 
     tmp_pdf_path: Optional[Path] = None
     try:
@@ -857,10 +916,14 @@ def convert_report(
             len(removed_chapters),
             tmp_pdf_path,
         )
-        return convert_pdf_to_markdown(tmp_pdf_path, return_summary=return_summary, verbose=verbose)
+        return convert_pdf_to_markdown(
+            tmp_pdf_path, return_summary=return_summary, verbose=verbose
+        )
     except Exception as e:
         _log.warning("Report mode failed, fallback to full conversion: %s", e)
-        return convert_pdf_to_markdown(path, return_summary=return_summary, verbose=verbose)
+        return convert_pdf_to_markdown(
+            path, return_summary=return_summary, verbose=verbose
+        )
     finally:
         if tmp_pdf_path is not None:
             tmp_pdf_path.unlink(missing_ok=True)
