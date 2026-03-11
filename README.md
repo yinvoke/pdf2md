@@ -87,38 +87,70 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 12138 --reload
 
 ## 接口
 
-- **POST /convert**：通用 PDF 转 Markdown，`multipart/form-data` 字段 `file` 为 PDF；返回 JSON 含 `id`、`url`、`name`（结果缓存约 1 小时）
-- **POST /convert_report**：财报类 PDF 转 Markdown，使用报表专用预处理；请求/返回格式同 `/convert`
-- **GET /health**：`{"cuda_available": bool, "status": "ok"}`
-- **GET /files/{file_id}**：按 `id` 下载转换后的 Markdown
+### POST /convert
 
-示例：
+通用 PDF 转 Markdown。支持两种输入方式（二选一）：
+
+**方式一：文件上传**
 
 ```bash
 curl -X POST "http://localhost:12138/convert" -F "file=@your.pdf"
 ```
 
-返回为 JSON 数组，每个元素对应一个转换结果：
+**方式二：PDF 链接**
 
-| 字段   | 说明 |
-|--------|------|
-| `id`   | 文件 ID，用于下载 |
-| `url`  | 下载地址，即 `GET /files/{id}` 的完整 URL |
-| `name` | 建议保存的 .md 文件名（由原 PDF 名推导） |
+```bash
+curl -X POST "http://localhost:12138/convert" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com/path/to/report.pdf"}'
+```
 
-示例返回：
+> URL 模式支持 PDF Viewer 链接（如 `viewer.html?file=/path/to.pdf`），会自动提取实际 PDF 地址。
+
+### POST /convert_report
+
+财报类 PDF 转 Markdown，使用报表专用预处理（章节过滤 + 后处理）。请求/返回格式同 `/convert`，同样支持文件上传和 URL 两种方式。
+
+### GET /health
+
+```json
+{"cuda_available": true, "status": "ok"}
+```
+
+### GET /files/{file_id}
+
+按 `id` 下载转换后的 Markdown 文件。
+
+### 返回格式
+
+所有转换接口返回 JSON 数组：
 
 ```json
 [
   {
     "id": "a1b2c3d4e5f6...",
     "url": "http://localhost:12138/files/a1b2c3d4e5f6...",
-    "name": "your.md"
+    "name": "report.md",
+    "cached": false
   }
 ]
 ```
 
-用返回的 `url` 或 `GET /files/{id}` 可下载 Markdown 正文。
+| 字段     | 说明 |
+|----------|------|
+| `id`     | 文件 ID，用于下载 |
+| `url`    | 下载地址，即 `GET /files/{id}` 的完整 URL |
+| `name`   | 建议保存的 .md 文件名（由原 PDF 名推导） |
+| `cached` | 是否命中缓存 |
+
+### 缓存策略
+
+| 缓存对象 | 缓存路径 | TTL | 缓存 Key |
+|---------|---------|-----|---------|
+| 下载的 PDF 文件 | `cache/pdf/` | 180 天 | URL 的 SHA256 |
+| 生成的 Markdown | `cache/markdown/` | 180 天 | 内容 SHA256 |
+
+> 相同 URL 或相同内容的 PDF 在缓存有效期内直接返回，不会重复下载或转换。
 
 ## Docker
 

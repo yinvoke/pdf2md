@@ -1,6 +1,6 @@
 [project]
 name = "docling-server"
-version = "0.1.0"
+version = "1.0.0"
 description = "PDF to Markdown conversion service using Docling with GPU acceleration"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -10,6 +10,7 @@ dependencies = [
     "python-multipart>=0.0.12",
     "docling>=2.0.0",
     "pymupdf>=1.23.0",
+    "httpx>=0.27.0",
 ]
 
 [project.optional-dependencies]
