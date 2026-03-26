@@ -16,30 +16,51 @@
 |------|---------------|-----------------|
 | **速度（正常字体）** | 中等 (16s/59p) | ⚡ 极快 (1.2s/59p) |
 | **速度（CID 字体）** | 108s/127p (含 OCR 回退) | 70s/127p (force_ocr) |
-| **表格提取** | ✅ Markdown 格式表格，列对齐 | ❌ 纯文本散列，无表格结构 |
+| **表格提取** | ✅ Markdown 格式表格，列对齐 | ⚠️ 有 layout 检测，但 CID 表格乱码无解 |
 | **文档结构** | ✅ `##` 层级分明 | ⚠️ 平铺，大量空行 |
-| **内容量** | 最丰富 (80K/159K/440K) | 较少 (46K/89K/199K) |
-| **CID 乱码处理** | ✅ 自动检测 + OCR 回退 | ❌ 需手动 force_ocr |
+| **内容量** | 最丰富 (80K/159K/440K) | 较少 (46K/89K/199K)，layout_accurate 可达 247K |
+| **CID 乱码处理** | ✅ 自动检测 + OCR 回退（含表格） | ❌ force_ocr 仅修复正文，表格仍乱码 |
 | **OCR 文字准确度** | ⚠️ 部分字符错误 | ✅ 传统中文最准 |
 
-> **结论**：财报场景使用 **docling**。表格和文档结构是财报转换的核心需求，docling 的 Markdown 表格和层级标题远优于 kreuzberg。kreuzberg 适合纯文本、无表格的快速解析场景。
+> **结论**：财报场景使用 **docling**。表格和文档结构是财报转换的核心需求，docling 的 Markdown 表格和层级标题远优于 kreuzberg。kreuzberg 适合纯文本、正常字体的快速解析场景。
 
 ### 速度对比
 
 | 工具 | 小米年报 (59p) | 小米半年报 (127p) | 新和成 (189p) |
 |------|---------------|------------------|--------------|
 | kreuzberg normal | 1.2s 🚀 | 1.1s 🚀 | 2.7s 🚀 |
+| kreuzberg layout_accurate | 9.5s | 18.5s | 29.8s |
 | docling auto | 15.8s | 107.7s (含 OCR 回退) | 82.5s |
 | kreuzberg force_ocr | 52.1s | 70.3s | 114.1s |
+| kreuzberg layout_accurate + ocr | 48.2s | 86.0s | 138.8s |
 
 ### CID 字体处理（HYQiHei 小米半年报 127p）
 
 | 工具 | normal 模式 | force_ocr 模式 |
 |------|------------|---------------|
 | docling | ✅ 0% 乱码 (自动检测 + OCR 回退) | — |
-| kreuzberg | ❌ 30.4% 乱码 | ✅ 0% |
+| kreuzberg | ❌ 30.4% 乱码 | ⚠️ 正文 0%，表格仍 20% 乱码 |
 
-> CID-keyed 字体（如汉仪旗黑 HYQiHei + `Identity-H` 编码）在 pypdfium2 后端提取时产生乱码。docling 通过 PyMuPDF 预检测自动切换 OCR 模式，无需手动干预。
+> CID-keyed 字体（如汉仪旗黑 HYQiHei + `Identity-H` 编码）在 pypdfium2 后端提取时产生乱码。docling 通过 PyMuPDF 预检测自动切换 OCR 模式，**表格和正文均修复**。kreuzberg 的 `force_ocr` 仅覆盖正文，表格提取管线固定使用 pdfium 后端，CID 字体表格无法修复。
+
+### kreuzberg 高级模式对比
+
+kreuzberg 支持 Layout Detection（`fast`=YOLO / `accurate`=RT-DETR v2）和独立的表格检测管线。
+
+| 模式 | 小米年报 59p (MSungHK) | 小米半年报 127p (HYQiHei) | 新和成 189p (A 股) |
+|------|----------------------|--------------------------|------------------|
+| normal | 46K, 1.2s, 10t, ✅/✅ | 92K, 1.1s, 9t, ❌/❌ | 199K, 2.7s, 17t, ✅/✅ |
+| force_ocr | 46K, 41.6s, 10t, ✅/✅ | 89K, 70.0s, 9t, ✅/❌ | 197K, 114.5s, 17t, ✅/✅ |
+| layout_fast | 45K, 15.6s, 10t, ✅/✅ | 90K, 22.7s, 9t, ❌/❌ | 197K, 38.9s, 17t, ✅/✅ |
+| layout_accurate | 47K, 9.5s, 10t, ✅/✅ | 97K, 18.5s, 9t, ❌/❌ | 247K, 29.8s, 17t, ✅/✅ |
+| layout_accurate + ocr | 46K, 48.2s, 10t, ✅/✅ | 89K, 86.0s, 9t, ✅/❌ | 197K, 138.8s, 17t, ✅/✅ |
+
+> 格式：内容字符数, 耗时, 表格数, 正文✅❌/表格✅❌（乱码检测）
+>
+> **关键发现**：
+> - `layout_accurate` 比 `layout_fast` 更快（RT-DETR v2 在 GPU 上优于 YOLO），且提取内容最丰富（247K vs 199K）
+> - 表格管线固定使用 pdfium 文本提取，`force_ocr` 无法覆盖 → HYQiHei CID 字体表格**始终乱码**
+> - 正常字体 PDF 上表格检测数量合理（10-17 个），Markdown 格式输出
 
 ---
 
