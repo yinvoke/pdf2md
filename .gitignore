@@ -4,3 +4,7 @@
 __pycache__/
 output/*.md
 logs/
+benchmark/.venv-*/
+benchmark/results/
+benchmark/output/
+.kreuzberg/
