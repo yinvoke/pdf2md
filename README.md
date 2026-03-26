@@ -159,6 +159,63 @@ docker build -t pdf2md .
 docker run -d --name pdf2md --gpus all -p 12138:12138 -v ./logs:/app/logs --restart unless-stopped pdf2md
 ```
 
+### GPU 透传配置
+
+容器必须通过 NVIDIA Container Toolkit 正确透传 GPU，否则会退回 CPU 模式。CPU 模式下 `force_backend_text=True` 使用 pypdfium2 后端提取文字，对于 CID 字体（常见于港股财报等 Adobe InDesign 生成的 PDF）会产生乱码。
+
+**前置条件：**
+
+1. 宿主机已安装 NVIDIA 驱动（`nvidia-smi` 正常输出）
+2. 安装 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)：
+
+```bash
+# Ubuntu/Debian
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+  sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+  sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+```
+
+3. 配置 Docker 默认使用 nvidia runtime：
+
+```bash
+# /etc/docker/daemon.json
+{
+    "default-runtime": "nvidia",
+    "runtimes": {
+        "nvidia": {
+            "args": [],
+            "path": "nvidia-container-runtime"
+        }
+    }
+}
+```
+
+```bash
+sudo systemctl restart docker
+```
+
+**验证：**
+
+```bash
+# 容器内应能看到 GPU
+docker exec pdf2md nvidia-smi
+
+# 确认 PyTorch 可用 CUDA
+docker exec pdf2md .venv/bin/python -c "import torch; print(torch.cuda.is_available())"
+```
+
+> ⚠️ 常见问题：`daemon.json` 中只注册了 nvidia runtime 但没有设置 `"default-runtime": "nvidia"`，导致 `--gpus all` 仍然使用 `runc`，GPU 设备无法透传（表现为容器内 `nvidia-smi` 报 "Failed to initialize NVML"、`torch.cuda.is_available()` 返回 `False`）。
+
+### 港股财报说明
+
+港股财报 PDF（如巨潮资讯网 `cninfo.com.cn` 的 HK 上市公司公告）与 A 股年报有以下差异：
+
+- **无 `第X节` 章节结构**：港股财报 PDF 通常无 TOC 书签或仅有英文书签，不含 `第一节`、`第二节` 等标准分节。`convert_report` 会自动 fallback 为全量转换（等同 `convert`），无需额外处理。
+- **繁体中文 + 英文混排**：需要 GPU 模式（ML 模型识别），CPU 模式的 pypdfium2 后端对 CID 字体编码支持不完善，会产生乱码。
+- **文件名通常为数字编号**（如 `1222833601.PDF`），扩展名可能为大写 `.PDF`。
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

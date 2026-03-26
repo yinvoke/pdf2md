@@ -5,6 +5,7 @@ Run from project root:
   uv run python test/run_convert_example.py
   uv run python test/run_convert_example.py -v
 """
+
 import argparse
 import os
 import signal
@@ -59,7 +60,7 @@ def main() -> None:
     _install_fast_interrupt()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    pdfs = list(EXAMPLE_DIR.glob("*.pdf"))
+    pdfs = sorted(set(EXAMPLE_DIR.glob("*.pdf")) | set(EXAMPLE_DIR.glob("*.PDF")))
     if args.name_contains:
         pdfs = [p for p in pdfs if args.name_contains in p.name]
     if not pdfs:
@@ -79,7 +80,9 @@ def main() -> None:
                 verbose=args.verbose,
             )
             out_path.write_text(markdown, encoding="utf-8")
-            print(f"  Written {len(markdown)} chars, {summary.pages} pages, {summary.duration_sec:.2f}s")
+            print(
+                f"  Written {len(markdown)} chars, {summary.pages} pages, {summary.duration_sec:.2f}s"
+            )
         except Exception as e:
             print(f"  ERROR: {e}")
             raise
