@@ -21,7 +21,10 @@ os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 from app.postprocess import postprocess_markdown
 from docling.datamodel.accelerator_options import AcceleratorDevice, AcceleratorOptions
 from docling.datamodel.base_models import ConversionStatus, InputFormat
-from docling.datamodel.pipeline_options import ThreadedPdfPipelineOptions
+from docling.datamodel.pipeline_options import (
+    OcrAutoOptions,
+    ThreadedPdfPipelineOptions,
+)
 from docling.datamodel.settings import settings
 from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling.pipeline.threaded_standard_pdf_pipeline import ThreadedStandardPdfPipeline
@@ -34,6 +37,81 @@ def _verbose_print(verbose: bool, msg: str, *args) -> None:
     if not verbose:
         return
     print(msg % args if args else msg)
+
+
+def _is_garbled_cid_text(
+    text: str, *, sample_size: int = 2000, threshold: float = 0.08
+) -> bool:
+    """Detect garbled CID-keyed font output (e.g. HYQiHei in HK stock PDFs).
+
+    Broken CMap tables produce text dominated by CJK Ext-A, Ethiopic,
+    combining diacriticals, and misc technical symbols.  Returns True when
+    the ratio of such code points in the first *sample_size* chars exceeds
+    *threshold*.
+    """
+    stripped = re.sub(r"[\s#|>\-*_`\[\]()!]", "", text)
+    if len(stripped) < 30:
+        return False
+
+    sample = stripped[:sample_size]
+    suspicious = 0
+    for ch in sample:
+        cp = ord(ch)
+        if (
+            0x3400 <= cp <= 0x4DBF  # CJK Unified Ideographs Extension A (rarely used)
+            or 0x2C80 <= cp <= 0x2DFF  # Coptic + Ethiopic Supplement
+            or 0x1D00 <= cp <= 0x1DFF  # Phonetic Extensions + Combining diacriticals
+            or 0x2300 <= cp <= 0x23FF  # Miscellaneous Technical (⎌ ⎺ etc.)
+            or 0x2700 <= cp <= 0x27BF  # Dingbats
+            or 0x27C0 <= cp <= 0x27EF  # Misc Mathematical Symbols-A
+            or 0x2980 <= cp <= 0x29FF  # Misc Mathematical Symbols-B
+            or 0x2400 <= cp <= 0x243F  # Control Pictures (␌ etc.)
+            or 0x1F00 <= cp <= 0x1FFF  # Greek Extended
+        ):
+            suspicious += 1
+
+    ratio = suspicious / len(sample)
+    if ratio > threshold:
+        _log.info(
+            "Garbled CID text detected: suspicious=%d/%d ratio=%.3f threshold=%.3f",
+            suspicious,
+            len(sample),
+            ratio,
+            threshold,
+        )
+    return ratio > threshold
+
+
+def _has_garbled_cid_fonts(pdf_path: Path) -> bool:
+    """Pre-flight check: detect PDFs whose CID-keyed fonts produce garbled text.
+
+    Uses PyMuPDF to extract raw text from a few sample pages and runs the
+    garbled-character heuristic.  This avoids a full Docling conversion
+    just to discover the text is broken.
+
+    Sampling strategy: pages 2-4 (0-indexed) to skip cover pages which
+    are often image-only.
+    """
+    import pymupdf  # type: ignore
+
+    try:
+        doc = pymupdf.open(str(pdf_path))
+    except Exception as exc:
+        _log.debug("_has_garbled_cid_fonts: cannot open PDF %s: %s", pdf_path, exc)
+        return False
+
+    try:
+        text = ""
+        start_page = min(2, doc.page_count - 1)
+        end_page = min(5, doc.page_count)
+        for pg in range(start_page, end_page):
+            text += doc[pg].get_text()
+        return _is_garbled_cid_text(text)
+    except Exception as exc:
+        _log.debug("_has_garbled_cid_fonts: text extraction failed: %s", exc)
+        return False
+    finally:
+        doc.close()
 
 
 # Pipeline tuning knobs (adjust here for local GPU/CPU benchmark tests).
@@ -424,8 +502,9 @@ class ConversionSummary:
         }
 
 
-# Module-level singleton converter (lazy init)
+# Module-level singleton converters (lazy init)
 _converter: Optional[DocumentConverter] = None
+_ocr_converter: Optional[DocumentConverter] = None
 REPORT_REMOVE_KEYWORDS = (
     "释义",
     "目录",
@@ -524,6 +603,48 @@ def _get_converter(*, verbose: bool = False) -> DocumentConverter:
     return _converter
 
 
+def _get_ocr_converter(*, verbose: bool = False) -> DocumentConverter:
+    global _ocr_converter
+    if _ocr_converter is not None:
+        return _ocr_converter
+
+    init_start = time.perf_counter()
+    cuda_ok = _cuda_available()
+    pipeline_cfg = (
+        _build_gpu_pipeline_config(verbose=verbose) if cuda_ok else CPU_PIPELINE_CONFIG
+    )
+    accelerator_device = AcceleratorDevice.CUDA if cuda_ok else AcceleratorDevice.CPU
+
+    pipeline_options = ThreadedPdfPipelineOptions(
+        accelerator_options=AcceleratorOptions(device=accelerator_device),
+        ocr_batch_size=pipeline_cfg["ocr_batch_size"],
+        layout_batch_size=pipeline_cfg["layout_batch_size"],
+        table_batch_size=pipeline_cfg["table_batch_size"],
+        queue_max_size=pipeline_cfg["queue_max_size"],
+    )
+    pipeline_options.do_ocr = True
+    pipeline_options.ocr_options = OcrAutoOptions(force_full_page_ocr=True)
+    pipeline_options.do_table_structure = pipeline_cfg["do_table_structure"]
+    pipeline_options.images_scale = pipeline_cfg["images_scale"]
+    pipeline_options.force_backend_text = False
+
+    _ocr_converter = DocumentConverter(
+        format_options={
+            InputFormat.PDF: PdfFormatOption(
+                pipeline_cls=ThreadedStandardPdfPipeline,
+                pipeline_options=pipeline_options,
+            )
+        }
+    )
+    _ocr_converter.initialize_pipeline(InputFormat.PDF)
+    _log.info(
+        "OCR fallback pipeline initialized: device=%s, duration=%.3fs",
+        accelerator_device.value,
+        time.perf_counter() - init_start,
+    )
+    return _ocr_converter
+
+
 def convert_pdf_to_markdown(
     pdf_path: Path | str,
     *,
@@ -548,11 +669,25 @@ def convert_pdf_to_markdown(
         verbose, "[STEP 1/3] Input checked: path=%s, size_mb=%.2f", path, file_size_mb
     )
 
+    use_ocr = _has_garbled_cid_fonts(path)
+    if use_ocr:
+        _log.info(
+            "Pre-flight CID font check: garbled text detected, using OCR pipeline: %s",
+            path.name,
+        )
+
     converter_start = time.perf_counter()
-    conv = _get_converter(verbose=verbose)
+    conv = (
+        _get_ocr_converter(verbose=verbose)
+        if use_ocr
+        else _get_converter(verbose=verbose)
+    )
     converter_duration = time.perf_counter() - converter_start
     _verbose_print(
-        verbose, "[STEP 2/3] Converter ready: duration_sec=%.3f", converter_duration
+        verbose,
+        "[STEP 2/3] Converter ready: duration_sec=%.3f, ocr_mode=%s",
+        converter_duration,
+        use_ocr,
     )
     summary = ConversionSummary()
 
@@ -669,6 +804,33 @@ def convert_pdf_to_markdown(
         )
 
         markdown = result.document.export_to_markdown()
+
+        # Safety net: catch garbled CID text missed by pre-flight detection
+        if not use_ocr and _is_garbled_cid_text(markdown):
+            _log.warning(
+                "Garbled CID text detected post-conversion, retrying with full-page OCR: %s",
+                path.name,
+            )
+            ocr_conv = _get_ocr_converter(verbose=verbose)
+            ocr_start = time.perf_counter()
+            ocr_result = ocr_conv.convert(path)
+            ocr_duration = time.perf_counter() - ocr_start
+            if ocr_result.status in {
+                ConversionStatus.SUCCESS,
+                ConversionStatus.PARTIAL_SUCCESS,
+            }:
+                markdown = ocr_result.document.export_to_markdown()
+                _log.info(
+                    "OCR fallback succeeded (post-conversion): %s, duration=%.3fs",
+                    path.name,
+                    ocr_duration,
+                )
+                summary.duration_sec += ocr_duration
+            else:
+                _log.warning(
+                    "OCR fallback failed (%s), using original output", ocr_result.status
+                )
+
         markdown = postprocess_markdown(markdown)
         if return_summary:
             return markdown, summary
